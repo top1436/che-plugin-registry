@@ -37,6 +37,7 @@ METAS_DIR="${METAS_DIR:-${DEFAULT_METAS_DIR}}"
 #   \6 - Tag of image or digest, e.g. quay.io/eclipse/che-theia:(tag)
 #   \7 - Optional quotation following image reference
 IMAGE_REGEX="([[:space:]>-]*[\r]?[[:space:]]*[\"']?)([._:a-zA-Z0-9-]*)/([._a-zA-Z0-9-]*)/([._a-zA-Z0-9-]*)(@sha256)?:([._a-zA-Z0-9-]*)([\"']?)"
+IMAGE_REGEX_FOR_SDS="([[:space:]>-]*[\r]?[[:space:]]*[\"']?)([._:a-zA-Z0-9-]*)/([._a-zA-Z0-9-]*)/(che-plugin-sidecar)(@sha256)?:([._a-zA-Z0-9-]*)-([._a-zA-Z0-9-]*)([\"']?)"
 
 
 function run_main() {
@@ -118,16 +119,19 @@ function extract_and_use_related_images_env_variables_with_image_digest_info() {
     readarray -t metas < <(find "${METAS_DIR}" -name 'meta.yaml' -o -name 'devfile.yaml' -o -name 'che-theia-plugin.yaml')
     for meta in "${metas[@]}"; do
         readarray -t images < <(grep "image:" "${meta}" | sed -r "s;.*image:[[:space:]]*'?\"?([._:a-zA-Z0-9-]*/?[._a-zA-Z0-9-]*/[._a-zA-Z0-9-]*(@sha256)?:?[._a-zA-Z0-9-]*)'?\"?[[:space:]]*;\1;")
-        for image in "${images[@]}"; do
+        for image in "${images[@]}"; do # image 주소
+        ## // : search and replace (all)
+        # 시작 '/' 삭제
         separators="${image//[^\/]}"
-        # Warning, keep in mind: image without registry name is it possible case. It's mean, that image comes from private registry, where is we have organization name, but no registry name...
+        # Warning, keep in mind: image without registry name is it possible case. It's mean, that image comes from private registry, where is we have organization name, but no registry name...quay.io/ide-dev/plugin:sha~!~!
+        # 태그로 바뀐 아이이면 map에 존재
         digest="${imageMap[${image}]}"
-
+        # -z: if null
         if [[ -z "${digest}" ]] && [ "${#separators}" == "1" ]; then
-            imageWithDefaultRegistry="docker.io/${image}"
+            imageWithDefaultRegistry="sds.redii.net/${image}"
             digest="${imageMap[${imageWithDefaultRegistry}]}"
         fi
-
+        # -n: if not null
         if [[ -n "${digest}" ]]; then
             if [[ ${image} == *":"* ]]; then
             imageWithoutTag="${image%:*}"
@@ -146,7 +150,9 @@ function extract_and_use_related_images_env_variables_with_image_digest_info() {
 }
 
 function update_container_image_references() {
-
+    echo "registry: $REGISTRY"
+    echo "organ: $ORGANIZATION"
+    echo "tag: $TAG"
     # We can't use the `-d` option for readarray because
     # registry.centos.org/centos/httpd-24-centos7 ships with Bash 4.2
     # The below command will fail if any path contains whitespace
@@ -154,7 +160,7 @@ function update_container_image_references() {
     for meta in "${metas[@]}"; do
     echo "Checking meta $meta"
     # Need to update each field separately in case they are not defined.
-    # Defaults don't work because registry and tags may be different.
+    # Defaults don't work because registry and tags may be different.    
     if [ -n "$REGISTRY" ]; then
         echo "    Updating image registry to $REGISTRY"
         < "$meta" tr '\n' '\r' | sed -E "s|image:$IMAGE_REGEX|image:\1${REGISTRY}/\3/\4\5:\6\7|g" |  tr '\r' '\n' > "$meta.tmp" && cat "$meta.tmp" > "$meta" && rm "$meta.tmp"
@@ -167,6 +173,9 @@ function update_container_image_references() {
         echo "    Updating image tag to $TAG"
         < "$meta" tr '\n' '\r' | sed -E "s|image:$IMAGE_REGEX|image:\1\2/\3/\4:${TAG}\7|g" |  tr '\r' '\n' > "$meta.tmp" && cat "$meta.tmp" > "$meta" && rm "$meta.tmp"
     fi
+    
+    echo "    Updating image tag for SDS"
+        < "$meta" tr '\n' '\r' | sed -E "s|image:$IMAGE_REGEX_FOR_SDS|image:\1\2/\3/\4-\6:\7\8|g" |  tr '\r' '\n' > "$meta.tmp" && cat "$meta.tmp" > "$meta" && rm "$meta.tmp"
     done
 }
 
